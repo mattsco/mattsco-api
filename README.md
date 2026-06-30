@@ -20,6 +20,18 @@ brute de ~58 Ko) :
 
 Variable d'env requise : `PRIM_KEY` (clé marketplace PRIM).
 
+### `GET /api/oura`
+Tes scores Oura. Token Oura (**Personal Access Token**) en env `OURA_TOKEN`.
+
+- `GET /api/oura` → derniers scores connus :
+  ```json
+  { "day": "2026-06-30", "sleep": 82, "readiness": 75, "activity": 90 }
+  ```
+- `GET /api/oura?days=7` → historique : `{ "days": [ {day, sleep, readiness, activity}, ... ] }`
+
+Variable d'env requise : `OURA_TOKEN`
+(créer le token sur https://cloud.ouraring.com/personal-access-tokens).
+
 ## Déploiement
 Voir [`DEPLOY.md`](./DEPLOY.md).
 
