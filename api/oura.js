@@ -38,6 +38,18 @@ function byDayDesc(a, b) {
   return a.day < b.day ? 1 : (a.day > b.day ? -1 : 0);
 }
 
+// Supprime les gros tableaux de séries temporelles (clé "items", ex. met.items
+// de daily_activity = une valeur par minute) pour alléger la réponse.
+function stripHeavy(node) {
+  if (Array.isArray(node)) { node.forEach(stripHeavy); return; }
+  if (node && typeof node === "object") {
+    for (const k of Object.keys(node)) {
+      if (k === "items") { delete node[k]; }
+      else { stripHeavy(node[k]); }
+    }
+  }
+}
+
 export default async function handler(req, res) {
   const token = process.env.OURA_TOKEN;
   if (!token) {
@@ -84,6 +96,7 @@ export default async function handler(req, res) {
     // days===1 : dernier enregistrement complet ; sinon : tableau brut récent d'abord
     out[k] = (days === 1) ? sorted[0] : sorted;
   }
+  stripHeavy(out);
   if (Object.keys(errors).length) { out._unavailable = Object.keys(errors); }
 
   res.status(200).json(out);
