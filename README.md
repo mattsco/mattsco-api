@@ -24,6 +24,15 @@ Variable d'env requise : `PRIM_KEY` (clé marketplace PRIM).
 Quelques routes à usage strictement personnel (données privées récupérées via des
 tokens stockés en variables d'environnement). Non documentées ici.
 
+Protégées par un secret partagé : si la variable d'env `API_SECRET` est définie, ces
+routes exigent `?k=<secret>` et renvoient sinon un `404`. Pour protéger une route,
+ajouter en tête du handler :
+
+```js
+const SECRET = process.env.API_SECRET;
+if (SECRET && (!req.query || req.query.k !== SECRET)) { res.status(404).end(); return; }
+```
+
 ## Déploiement
 Voir [`DEPLOY.md`](./DEPLOY.md).
 

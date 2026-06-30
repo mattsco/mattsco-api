@@ -51,6 +51,13 @@ function stripHeavy(node) {
 }
 
 export default async function handler(req, res) {
+  // Secret partagé : si API_SECRET est défini, exiger ?k=<secret>. 404 = route "invisible".
+  const SECRET = process.env.API_SECRET;
+  if (SECRET && (!req.query || req.query.k !== SECRET)) {
+    res.status(404).end();
+    return;
+  }
+
   const token = process.env.OURA_TOKEN;
   if (!token) {
     res.status(500).json({ err: "no OURA_TOKEN env" });
