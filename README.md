@@ -21,13 +21,22 @@ brute de ~58 Ko) :
 Variable d'env requise : `PRIM_KEY` (clé marketplace PRIM).
 
 ### `GET /api/oura`
-Tes scores Oura. Token Oura (**Personal Access Token**) en env `OURA_TOKEN`.
+Tes métriques Oura "daily". Token Oura (**Personal Access Token**) en env `OURA_TOKEN`.
 
-- `GET /api/oura` → derniers scores connus :
+Interroge toutes les routes `daily_*` : `sleep`, `readiness`, `activity`, `spo2`,
+`stress`, `resilience`, `cardiovascular_age`. Celles que le token n'autorise pas sont
+ignorées et listées dans `_unavailable`.
+
+- `GET /api/oura` → **dernier connu par métrique** (dates possiblement différentes, car
+  l'activité du jour n'est consolidée qu'en fin de journée) :
   ```json
-  { "day": "2026-06-30", "sleep": 82, "readiness": 75, "activity": 90 }
+  {
+    "sleep":     { "value": 70, "day": "2026-06-30" },
+    "readiness": { "value": 80, "day": "2026-06-30" },
+    "activity":  { "value": 88, "day": "2026-06-29" }
+  }
   ```
-- `GET /api/oura?days=7` → historique : `{ "days": [ {day, sleep, readiness, activity}, ... ] }`
+- `GET /api/oura?days=7` → historique fusionné : `{ "days": [ {day, sleep, readiness, activity, ...} ] }`
 
 Variable d'env requise : `OURA_TOKEN`
 (créer le token sur https://cloud.ouraring.com/personal-access-tokens).
