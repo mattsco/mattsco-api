@@ -27,16 +27,22 @@ Interroge toutes les routes `daily_*` : `sleep`, `readiness`, `activity`, `spo2`
 `stress`, `resilience`, `cardiovascular_age`. Celles que le token n'autorise pas sont
 ignorées et listées dans `_unavailable`.
 
-- `GET /api/oura` → **dernier connu par métrique** (dates possiblement différentes, car
-  l'activité du jour n'est consolidée qu'en fin de journée) :
+- `GET /api/oura` → **dernier enregistrement COMPLET par métrique** (score +
+  `contributors` + `timestamp` + tout ce que l'API renvoie). Dates possiblement
+  différentes car l'activité du jour n'est consolidée qu'en fin de journée :
   ```json
   {
-    "sleep":     { "value": 70, "day": "2026-06-30" },
-    "readiness": { "value": 80, "day": "2026-06-30" },
-    "activity":  { "value": 88, "day": "2026-06-29" }
+    "sleep": {
+      "day": "2026-06-30", "score": 70,
+      "contributors": { "deep_sleep": 89, "efficiency": 81, "rem_sleep": 48, ... },
+      "timestamp": "2026-06-30T00:00:00.000+00:00"
+    },
+    "readiness": { "day": "2026-06-30", "score": 80, "contributors": { ... } },
+    "activity":  { "day": "2026-06-29", "score": 88, "contributors": { ... } }
   }
   ```
-- `GET /api/oura?days=7` → historique fusionné : `{ "days": [ {day, sleep, readiness, activity, ...} ] }`
+- `GET /api/oura?days=7` → tableaux bruts par métrique (récent d'abord) :
+  `{ "sleep": [ {...}, ... ], "readiness": [ ... ], ... }`
 
 Variable d'env requise : `OURA_TOKEN`
 (créer le token sur https://cloud.ouraring.com/personal-access-tokens).
