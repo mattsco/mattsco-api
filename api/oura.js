@@ -1,4 +1,4 @@
-// Route /api/oura : renvoie tes métriques Oura "daily" — enregistrements COMPLETS
+// Route /api/oura : renvoie tes métriques Oura — enregistrements COMPLETS
 // (score + contributors + timestamp + tout ce que l'API fournit).
 // Token Oura (Personal Access Token) en variable d'env OURA_TOKEN, jamais dans le code.
 //
@@ -7,13 +7,16 @@
 //   GET /api/oura?days=7   -> tableaux bruts par métrique (récent d'abord) :
 //                             { sleep:[...], readiness:[...], ... }
 //
-// On interroge toutes les routes "daily_*". Celles que le token n'autorise pas (ou
-// sans donnée) sont ignorées et listées dans "_unavailable".
+// On interroge les routes "daily_*" plus la collection `sleep` détaillée
+// (clé "sleep_sessions" : bedtimes, durée, efficacité, average_hrv, lowest_heart_rate —
+// une entrée par session, siestes comprises). Les routes que le token n'autorise pas
+// (ou sans donnée) sont ignorées et listées dans "_unavailable".
 // PAT à créer sur https://cloud.ouraring.com/personal-access-tokens
 const OURA = "https://api.ouraring.com/v2/usercollection";
 
 const DAILY = {
   sleep:              "daily_sleep",
+  sleep_sessions:     "sleep",
   readiness:          "daily_readiness",
   activity:           "daily_activity",
   spo2:               "daily_spo2",
