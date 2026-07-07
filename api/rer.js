@@ -1,10 +1,25 @@
 // Proxy PRIM -> mini-JSON pour la montre Garmin.
 // Le FR255 ne peut pas avaler les ~58 Ko bruts de PRIM (erreur -402) : ce proxy
-// filtre la direction Paris et ne renvoie que les 3 prochains départs (~300 o).
+// filtre la bonne direction et ne renvoie que les prochains départs (~300 o).
 // La clé PRIM vit dans la variable d'env PRIM_KEY (jamais renvoyée au client).
-const PRIM_URL =
-  "https://prim.iledefrance-mobilites.fr/marketplace/stop-monitoring?MonitoringRef=STIF:StopArea:SP:58875:";
-const WEST = ["Germain", "Rueil", "Nanterre"]; // terminus côté opposé à Paris
+//
+// Deux sens, choisis par le query param ?dir :
+//   out (défaut) = matin  : départ Rueil-Malmaison  -> Paris
+//                           (on garde tout SAUF les terminus ouest)
+//   in           = soir   : départ Gare de Lyon     -> Rueil / St-Germain
+//                           (on ne garde QUE les trains branche ouest A1 ;
+//                            Cergy/Poissy ne desservent PAS Rueil -> exclus)
+const REF_RUEIL = "STIF:StopArea:SP:58875:";   // Rueil-Malmaison RER (ZdA 58875)
+const REF_GDL = "STIF:StopArea:SP:470195:";    // Paris Gare de Lyon RER A (ZdA 470195)
+const PRIM_BASE =
+  "https://prim.iledefrance-mobilites.fr/marketplace/stop-monitoring?MonitoringRef=";
+
+// Config par sens. `keep` : ne garder QUE ces terminus (null = pas de whitelist).
+// `drop` : exclure ces terminus (null = pas de blacklist).
+const DIRS = {
+  out: { ref: REF_RUEIL, keep: null, drop: ["Germain", "Rueil", "Nanterre"] },
+  in: { ref: REF_GDL, keep: ["Germain", "Rueil"], drop: null },
+};
 
 function getVal(n) {
   if (n == null) return null;
@@ -14,6 +29,8 @@ function getVal(n) {
 }
 function shortDest(d) {
   if (!d) return "";
+  if (/Germain/.test(d)) return "St-Germain";
+  if (/Rueil/.test(d)) return "Rueil";
   if (/Marne|Chessy|Disney/.test(d)) return "Marne-Vallee";
   if (/Boissy/.test(d)) return "Boissy";
   if (/Vincennes/.test(d)) return "Vincennes";
@@ -30,8 +47,10 @@ export default async function handler(req, res) {
     res.status(500).json({ err: "no PRIM_KEY env" });
     return;
   }
+  const dir = req.query && req.query.dir === "in" ? "in" : "out";
+  const cfg = DIRS[dir];
   try {
-    const r = await fetch(PRIM_URL, {
+    const r = await fetch(PRIM_BASE + cfg.ref, {
       headers: { apikey: key, Accept: "application/json" },
     });
     if (!r.ok) {
@@ -50,7 +69,8 @@ export default async function handler(req, res) {
       const line = getVal(mvj.LineRef);
       if (line && line.indexOf("C01742") < 0) continue;
       const dest = getVal(mvj.DestinationName) || "";
-      if (WEST.some((w) => dest.indexOf(w) >= 0)) continue;
+      if (cfg.keep && !cfg.keep.some((w) => dest.indexOf(w) >= 0)) continue;
+      if (cfg.drop && cfg.drop.some((w) => dest.indexOf(w) >= 0)) continue;
       const call = mvj.MonitoredCall;
       if (!call) continue;
       const t = call.ExpectedDepartureTime || call.AimedDepartureTime;
