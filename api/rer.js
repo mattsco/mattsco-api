@@ -6,7 +6,7 @@
 // Deux sens, choisis par le query param ?dir :
 //   out (défaut) = matin  : départ Rueil-Malmaison  -> Paris
 //                           (on garde tout SAUF les terminus ouest)
-//   in           = soir   : départ Gare de Lyon     -> Rueil / St-Germain
+//   in           = soir   : départ Gare de Lyon     -> Rueil / St-Germain / Le Pecq
 //                           (on ne garde QUE les trains branche ouest A1 ;
 //                            Cergy/Poissy ne desservent PAS Rueil -> exclus)
 const REF_RUEIL = "STIF:StopArea:SP:58875:";   // Rueil-Malmaison RER (ZdA 58875)
@@ -17,8 +17,8 @@ const PRIM_BASE =
 // Config par sens. `keep` : ne garder QUE ces terminus (null = pas de whitelist).
 // `drop` : exclure ces terminus (null = pas de blacklist).
 const DIRS = {
-  out: { ref: REF_RUEIL, keep: null, drop: ["Germain", "Rueil", "Nanterre"] },
-  in: { ref: REF_GDL, keep: ["Germain", "Rueil"], drop: null },
+  out: { ref: REF_RUEIL, keep: null, drop: ["Germain", "Rueil", "Nanterre", "Pecq"] },
+  in: { ref: REF_GDL, keep: ["Germain", "Rueil", "Pecq"], drop: null },
 };
 
 function getVal(n) {
@@ -31,6 +31,7 @@ function shortDest(d) {
   if (!d) return "";
   if (/Germain/.test(d)) return "St-Germain";
   if (/Rueil/.test(d)) return "Rueil";
+  if (/Pecq/.test(d)) return "Le Pecq";
   if (/Marne|Chessy|Disney/.test(d)) return "Marne-Vallee";
   if (/Boissy/.test(d)) return "Boissy";
   if (/Vincennes/.test(d)) return "Vincennes";
