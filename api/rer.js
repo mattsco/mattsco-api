@@ -7,8 +7,9 @@
 //   out (défaut) = matin  : départ Rueil-Malmaison  -> Paris
 //                           (on garde tout SAUF les terminus ouest)
 //   in           = soir   : départ Gare de Lyon     -> Rueil / St-Germain / Le Pecq
-//                           (on ne garde QUE les trains branche ouest A1 ;
-//                            Cergy/Poissy ne desservent PAS Rueil -> exclus)
+//                           (on ne garde QUE les trains branche ouest A1 : leurs
+//                            terminus St-Germain, Rueil et Le Vésinet-Le Pecq
+//                            desservent tous Rueil ; Cergy/Poissy exclus)
 const REF_RUEIL = "STIF:StopArea:SP:58875:";   // Rueil-Malmaison RER (ZdA 58875)
 const REF_GDL = "STIF:StopArea:SP:470195:";    // Paris Gare de Lyon RER A (ZdA 470195)
 const PRIM_BASE =
@@ -31,7 +32,7 @@ function shortDest(d) {
   if (!d) return "";
   if (/Germain/.test(d)) return "St-Germain";
   if (/Rueil/.test(d)) return "Rueil";
-  if (/Pecq/.test(d)) return "Le Pecq";
+  if (/Pecq|Vésinet|Vesinet/.test(d)) return "Le Pecq";
   if (/Marne|Chessy|Disney/.test(d)) return "Marne-Vallee";
   if (/Boissy/.test(d)) return "Boissy";
   if (/Vincennes/.test(d)) return "Vincennes";
