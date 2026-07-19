@@ -1,18 +1,26 @@
 // Route /api/oura : renvoie tes métriques Oura — enregistrements COMPLETS
 // (score + contributors + timestamp + tout ce que l'API fournit).
-// Token Oura (Personal Access Token) en variable d'env OURA_TOKEN, jamais dans le code.
 //
 //   GET /api/oura          -> dernier enregistrement COMPLET par métrique :
 //                             { sleep:{...}, readiness:{...}, activity:{...}, ... }
 //   GET /api/oura?days=7   -> tableaux bruts par métrique (récent d'abord) :
 //                             { sleep:[...], readiness:[...], ... }
 //
-// On interroge les routes "daily_*" plus la collection `sleep` détaillée
-// (clé "sleep_sessions" : bedtimes, durée, efficacité, average_hrv, lowest_heart_rate —
-// une entrée par session, siestes comprises). Les routes que le token n'autorise pas
-// (ou sans donnée) sont ignorées et listées dans "_unavailable".
-// PAT à créer sur https://cloud.ouraring.com/personal-access-tokens
+// AUTH OURA — OAuth2 (Oura a supprimé les Personal Access Tokens, 2026).
+// L'access token dure ~30 j puis expire ; le refresh token est À USAGE UNIQUE
+// (chaque refresh en renvoie un nouveau et invalide l'ancien). On stocke donc le
+// couple {access_token, refresh_token, expires_at} dans Vercel KV et on le fait
+// tourner tout seul. Bootstrap : au premier appel (KV vide), on part du seed
+// OURA_REFRESH_TOKEN (obtenu une fois via scripts/oura-oauth.mjs), puis KV fait foi.
+//
+// Env attendues :
+//   OURA_CLIENT_ID, OURA_CLIENT_SECRET  -> ton app OAuth Oura
+//   OURA_REFRESH_TOKEN                  -> seed initial (ignoré une fois KV amorcé)
+//   KV_REST_API_URL, KV_REST_API_TOKEN  -> injectées par Vercel KV (Storage → KV)
+//   API_SECRET                          -> gate ?k=<secret> (inchangé)
 const OURA = "https://api.ouraring.com/v2/usercollection";
+const TOKEN_URL = "https://api.ouraring.com/oauth/token";
+const KV_KEY = "oura:tokens";
 
 const DAILY = {
   sleep:              "daily_sleep",
@@ -25,6 +33,79 @@ const DAILY = {
   cardiovascular_age: "daily_cardiovascular_age",
 };
 
+// --- Stockage KV (Upstash REST, sans SDK) ---------------------------------
+function kvEnv() {
+  // Upstash injecte selon l'intégration soit KV_REST_API_* (compat Vercel KV),
+  // soit UPSTASH_REDIS_REST_* : on accepte les deux.
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) {
+    throw new Error("KV non configuré (KV_REST_API_URL/TOKEN ou UPSTASH_REDIS_REST_URL/TOKEN)");
+  }
+  return { url, token };
+}
+
+async function kvGet(key) {
+  const { url, token } = kvEnv();
+  const r = await fetch(`${url}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) throw new Error(`KV get: HTTP ${r.status}`);
+  const j = await r.json(); // { result: "<string>" | null }
+  return j.result ? JSON.parse(j.result) : null;
+}
+
+async function kvSet(key, obj) {
+  const { url, token } = kvEnv();
+  const r = await fetch(`${url}/set/${encodeURIComponent(key)}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(obj),
+  });
+  if (!r.ok) throw new Error(`KV set: HTTP ${r.status}`);
+}
+
+// --- Access token OAuth2 : cache KV + refresh + rotation ------------------
+async function refreshTokens(refreshToken) {
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: process.env.OURA_CLIENT_ID || "",
+      client_secret: process.env.OURA_CLIENT_SECRET || "",
+    }).toString(),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`refresh Oura: HTTP ${res.status} — ${text}`);
+  const t = JSON.parse(text);
+  return {
+    access_token: t.access_token,
+    refresh_token: t.refresh_token, // NOUVEAU — l'ancien est mort
+    expires_at: Date.now() + (Number(t.expires_in) || 0) * 1000,
+  };
+}
+
+async function getAccessToken() {
+  let bundle = await kvGet(KV_KEY);
+
+  // Access token encore valide (marge 60 s) → on le réutilise, pas de refresh.
+  if (bundle && bundle.access_token && bundle.expires_at > Date.now() + 60_000) {
+    return bundle.access_token;
+  }
+
+  // Sinon on rafraîchit : refresh token de KV, ou seed d'env au tout premier appel.
+  const refreshToken = (bundle && bundle.refresh_token) || process.env.OURA_REFRESH_TOKEN;
+  if (!refreshToken) {
+    throw new Error("aucun refresh token (KV vide et OURA_REFRESH_TOKEN absent — re-seed via scripts/oura-oauth.mjs)");
+  }
+  bundle = await refreshTokens(refreshToken);
+  await kvSet(KV_KEY, bundle); // persiste le NOUVEAU refresh token avant tout usage
+  return bundle.access_token;
+}
+
+// --- Fetch Oura ------------------------------------------------------------
 async function fetchType(path, token, start, end) {
   const url = `${OURA}/${path}?start_date=${start}&end_date=${end}`;
   const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -61,9 +142,12 @@ export default async function handler(req, res) {
     return;
   }
 
-  const token = process.env.OURA_TOKEN;
-  if (!token) {
-    res.status(500).json({ err: "no OURA_TOKEN env" });
+  let token;
+  try {
+    token = await getAccessToken();
+  } catch (e) {
+    // Token cassé (chaîne de refresh rompue) ou KV indisponible : 502 explicite.
+    res.status(502).json({ err: "oura_auth", detail: String(e.message || e) });
     return;
   }
 
