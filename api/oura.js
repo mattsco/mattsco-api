@@ -31,6 +31,13 @@ const DAILY = {
   stress:             "daily_stress",
   resilience:         "daily_resilience",
   cardiovascular_age: "daily_cardiovascular_age",
+  // Fenêtre de coucher idéale calculée par Oura (couchers des nuits les mieux
+  // notées + vitesse de chute de la FC en début de nuit + réveil habituel).
+  // Demandée par sco-life le 2026-08-11 (spec 17) : c'est la seule seconde
+  // opinion disponible sur l'heure de coucher, et elle se décale toute seule
+  // quand la dette monte. Un `Promise.allSettled` couvre déjà le cas où la
+  // collection ne répond pas — elle atterrit dans `_unavailable`, comme spo2.
+  sleep_time:         "sleep_time",
 };
 
 // --- Stockage KV (Upstash REST, sans SDK) ---------------------------------
