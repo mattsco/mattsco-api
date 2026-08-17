@@ -38,6 +38,20 @@ const DAILY = {
   // quand la dette monte. Un `Promise.allSettled` couvre déjà le cas où la
   // collection ne répond pas — elle atterrit dans `_unavailable`, comme spo2.
   sleep_time:         "sleep_time",
+  // Les SESSIONS NON GUIDÉES (2026-08-18). C'est là que vivent les siestes que
+  // Matt enregistre à la main dans l'app Oura — « unguided session », mais aussi
+  // méditation et respiration. Rien à voir avec la collection `sleep` : celle-ci
+  // ne contient que ce que la bague détecte SEULE.
+  //
+  // Mesuré avant de l'ajouter : la bague détecte déjà 47 sessions non-nuit sur
+  // 75 jours (types `sleep`, `rest`, `late_nap`), donc l'essentiel passait. Ce
+  // qui manquait, c'est précisément ce que Matt déclare lui-même — et une sieste
+  // déclarée est le signal le plus fiable qui soit, puisqu'il ne dépend d'aucune
+  // détection.
+  session:            "session",
+  // Les séances enregistrées côté Oura. Doublonnent souvent Strava, mais couvrent
+  // ce que Strava ne voit pas (yoga, mobilité, marche déclarée).
+  workout:            "workout",
 };
 
 // --- Stockage KV (Upstash REST, sans SDK) ---------------------------------
@@ -158,16 +172,50 @@ export default async function handler(req, res) {
     return;
   }
 
-  let days = parseInt((req.query && req.query.days) || "1", 10);
-  if (isNaN(days) || days < 1) { days = 1; }
-  if (days > 30) { days = 30; }
+  // FENÊTRE EXPLICITE, en plus de `days` (2026-08-18). Le plafond était
+  // `if (days > 30) days = 30`, et il bloquait un usage précis : recalculer les
+  // repères de sco-life sur la période sabbatique de Matt (20/01 → 05/06). Ces
+  // 137 jours existent toujours chez Oura — vérifié, l'API les sert sans
+  // broncher — mais aucun appel ne pouvait les demander.
+  //
+  //   ?days=N                       les N derniers jours (inchangé)
+  //   ?start=YYYY-MM-DD&end=…       une fenêtre arbitraire, pour les backfills
+  //
+  // Le plafond passe à un an. Il ne disparaît pas : sans borne, un appel maladroit
+  // demanderait dix ans de sessions minute par minute à neuf collections d'un coup.
+  const qs = req.query || {};
+  const MAX_DAYS = 366;
 
-  // fenêtre large pour rattraper le dernier connu même si aujourd'hui manque
-  const lookback = Math.max(days + 1, 5);
-  const end = new Date();
-  const start = new Date(end.getTime() - lookback * 86400000);
-  const s = fmtDate(start);
-  const e = fmtDate(end);
+  let s;
+  let e;
+  let days;
+
+  if (qs.start && qs.end) {
+    s = String(qs.start).slice(0, 10);
+    e = String(qs.end).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(e) || s > e) {
+      res.status(400).json({ err: "bad_range", detail: "start et end au format YYYY-MM-DD, start <= end" });
+      return;
+    }
+    const span = Math.round((new Date(e) - new Date(s)) / 86400000);
+    if (span > MAX_DAYS) {
+      res.status(400).json({ err: "range_too_wide", detail: `${span} jours demandés, ${MAX_DAYS} au plus` });
+      return;
+    }
+    // Une fenêtre explicite rend TOUJOURS des tableaux : demander une plage puis
+    // recevoir un seul enregistrement serait le piège parfait.
+    days = 2;
+  } else {
+    days = parseInt(qs.days || "1", 10);
+    if (isNaN(days) || days < 1) { days = 1; }
+    if (days > MAX_DAYS) { days = MAX_DAYS; }
+    // fenêtre large pour rattraper le dernier connu même si aujourd'hui manque
+    const lookback = Math.max(days + 1, 5);
+    const end = new Date();
+    const start = new Date(end.getTime() - lookback * 86400000);
+    s = fmtDate(start);
+    e = fmtDate(end);
+  }
 
   const keys = Object.keys(DAILY);
   const settled = await Promise.allSettled(
