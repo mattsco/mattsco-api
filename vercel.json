@@ -1,6 +1,13 @@
 {
   "functions": {
-    "api/rer.js": { "maxDuration": 10 },
-    "api/debug/rer.js": { "maxDuration": 10 }
+    "api/rer.js": {
+      "maxDuration": 10
+    },
+    "api/debug/rer.js": {
+      "maxDuration": 10
+    },
+    "api/seedtrain-sim.js": {
+      "maxDuration": 10
+    }
   }
 }
