@@ -70,6 +70,11 @@ export const DEFAULTS = {
   c_1: 3, c_2: 4,           // density = c * uptake ^ gamma
   c_batch_rel_sd: 0.25,
   uptake_noise_rel: 0.012,
+  // start-up of the oxygen uptake after inoculation (21 Oct.): the reading starts low and closes in as 1 - k * exp(-h / tau);
+  // k is solved per batch so that the start rise (mean of hours 2 to 3 over the first hour) equals a draw around start_rise_s,
+  // log sd start_rise_sd_s, correlated start_link_s with the batch's own growth draw. start_rise_s = 0: no start-up
+  start_rise_1: 0, start_rise_2: 0, start_rise_sd_1: 0, start_rise_sd_2: 0, start_link_1: 0, start_link_2: 0,
+  start_tau_h_1: 1, start_tau_h_2: 1,
   count_noise_rel: 0.1,
   extra_lag_h: 1,           // the operator's extra count, this long after the projected crossing
   recount_h: 4,             // if that count still reads below the floor, the next one this long after
@@ -115,6 +120,30 @@ function localFormatter(tz) {
   };
 }
 
+// ---------- the start-up of the oxygen uptake reading ----------
+
+// The factor 1 - k * exp(-h / tau) (never below 0) by which the oxygen uptake reads under its value in the first hours. Its own
+// random stream: the other draws of the batch do not move. k is found by bisection so that the rise, computed on the readings
+// as the flow does (mean of hours [2, 4) over the mean of hour [0, 1), growth included), equals the target.
+function startupFactor(p, batch, s, mu, gamma, zMu) {
+  const median = p["start_rise_" + s];
+  if (!(median > 0)) return () => 1;
+  const tau = p["start_tau_h_" + s], link = Math.max(-1, Math.min(1, p["start_link_" + s]));
+  const z = link * zMu + Math.sqrt(1 - link * link) * rng(p.seed, batch.id, "startup" + s).normal();
+  const target = median * Math.exp(p["start_rise_sd_" + s] * z);
+  const f = (k) => (h) => Math.max(0, 1 - k * Math.exp(-h / tau));
+  const rise = (k) => {
+    const g = (h) => Math.exp((mu / gamma) * h) * f(k)(h), dt = p.step_min / 60;
+    let a = 0, na = 0, b = 0, nb = 0;
+    for (let h = 0; h < 4; h += dt) { if (h < 1) { a += g(h); na++; } else if (h >= 2) { b += g(h); nb++; } }
+    return (b / nb) / Math.max(1e-9, a / na);
+  };
+  let lo = 0, hi = 5;
+  if (rise(lo) >= target) return f(0);
+  for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (rise(mid) < target) lo = mid; else hi = mid; }
+  return f((lo + hi) / 2);
+}
+
 // ---------- one stage of one batch ----------
 
 const H = 3600 * 1000;
@@ -122,11 +151,13 @@ const H = 3600 * 1000;
 function runStage(p, batch, s, startMs, campaignFactor) {
   const r = rng(p.seed, batch.id, "stage" + s);
   const floor = p["floor_" + s], top = p["top_" + s];
-  const mu = p["mu_" + s] * campaignFactor * Math.exp(p.mu_batch_rel_sd * r.normal());
+  const zMu = r.normal();
+  const mu = p["mu_" + s] * campaignFactor * Math.exp(p.mu_batch_rel_sd * zMu);
   const v0 = Math.max(0.2, p["v0_" + s] + p["v0_sd_" + s] * r.normal());
   const c = p["c_" + s] * Math.exp(p.c_batch_rel_sd * r.normal());
   const gamma = p["gamma_" + s];
   const density = (h) => v0 * Math.exp(mu * h);
+  const startup = startupFactor(p, batch, s, mu, gamma, zMu);
   // the operator projects with the stage's typical rate, not the batch's own
   const muTyp = p["mu_" + s];
   const counts = [];
@@ -156,7 +187,7 @@ function runStage(p, batch, s, startMs, campaignFactor) {
     rank += 1;
   }
   const endH = transferH ?? p.max_stage_h;
-  return { s, startMs, endMs: startMs + endH * H, transferH, deviation, mu, v0, c, gamma, counts, density, floor, top };
+  return { s, startMs, endMs: startMs + endH * H, transferH, deviation, mu, v0, c, gamma, counts, density, floor, top, startup };
 }
 
 // ---------- the campaign ----------
@@ -196,7 +227,7 @@ export function simulate(p, nowMs) {
       for (let ms = stageStart; ms <= last; ms += p.step_min * 60 * 1000) {
         if (ms >= gapFrom && ms < gapTo) continue;   // a sensor outage of three hours
         const h = (ms - stageStart) / H;
-        const uptake = Math.pow(st.density(h) / st.c, 1 / st.gamma) * Math.exp(p.uptake_noise_rel * rs.normal());
+        const uptake = Math.pow(st.density(h) / st.c, 1 / st.gamma) * st.startup(h) * Math.exp(p.uptake_noise_rel * rs.normal());
         out.online.push({ batch: batch.id, stage: names[s - 1], unit, ts_local: fmt(ms), duration_h: +h.toFixed(4),
           uptake: +uptake.toFixed(5), ph: +(p["ph_" + s] + 0.01 * rs.normal()).toFixed(4), do_pct: +(p.do_pct + 1.5 * rs.normal()).toFixed(3),
           temp_c: +(p.temp_c + 0.03 * rs.normal()).toFixed(3), weight_kg: +(p["weight_" + s] * (1 + 0.0002 * h) + 0.3 * rs.normal()).toFixed(2) });
