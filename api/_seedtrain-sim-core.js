@@ -1,3 +1,5 @@
+import { REPLAY } from "./_seedtrain-replay.js";
+
 // Seed-train campaign simulator: deterministic, stateless, generic.
 //
 // Every call rebuilds the whole campaign from its parameters and returns what exists up to "now": the same parameters
@@ -84,6 +86,10 @@ export const DEFAULTS = {
   glucose_0: 6, glucose_use: 0.012, lactate_0: 0.4, lactate_make: 0.01, osmo: 320, pco2: 30,
   anomalies: 1,             // 1: one batch with a count far from what the previous one expected, one sensor gap
   max_stage_h: 120,         // safety: a stage never runs longer
+  // a real batch replayed live (29 Oct. 2026, demo): batch <prefix><replay_number> carries the data of _seedtrain-replay.js,
+  // its first stage inoculated at replay_start, shown up to now like the others; replay_start empty: no replay
+  replay_start: "2026-10-26T07:55:00Z",
+  replay_number: 6,
 };
 
 export function readParams(query) {
@@ -190,6 +196,33 @@ function runStage(p, batch, s, startMs, campaignFactor) {
   return { s, startMs, endMs: startMs + endH * H, transferH, deviation, mu, v0, c, gamma, counts, density, floor, top, startup };
 }
 
+// ---------- a real batch replayed ----------
+
+function replayBatch(p, nowMs, fmt, out) {
+  const t0 = Date.parse(p.replay_start);
+  if (!p.replay_start || Number.isNaN(t0)) return;
+  const id = p.prefix + String(p.replay_number).padStart(4, "0");
+  for (const st of REPLAY.stages) {
+    const start = t0 + st.start_h * H, end = t0 + st.end_h * H;
+    if (start > nowMs) break;
+    const done = end <= nowMs;
+    out.batches.push({ batch: id, campaign: p.prefix, stage: st.stage, unit: st.unit, start_local: fmt(start), end_local: done ? fmt(end) : null, status: done ? "done" : "running" });
+    for (const [h, uptake, ph, dop, temp, weight] of st.online) {
+      if (start + h * H > nowMs) break;
+      out.online.push({ batch: id, stage: st.stage, unit: st.unit, ts_local: fmt(start + h * H), duration_h: h, uptake, ph, do_pct: dop, temp_c: temp, weight_kg: weight });
+    }
+    let ivc = 0, prev = null;
+    st.counts.forEach(([h, vcc, viability, ph, glucose, lactate, osmo, pco2], rank) => {
+      if (start + h * H > nowMs) return;
+      if (prev) ivc += ((prev[1] + vcc) / 2) * ((h - prev[0]) / 24);
+      out.counts.push({ batch: id, stage: st.stage, unit: st.unit, rank, time_local: fmt(start + h * H), duration_h: h, vcc, viability, ph, glucose, lactate,
+        osmo, pco2, ivc: +(rank === 0 ? vcc : ivc).toFixed(2) });
+      prev = [h, vcc];
+    });
+    if (!done) break;
+  }
+}
+
 // ---------- the campaign ----------
 
 export function simulate(p, nowMs) {
@@ -251,5 +284,6 @@ export function simulate(p, nowMs) {
       stageStart = st.endMs;     // the next stage starts at the transfer
     }
   }
+  replayBatch(p, nowMs, fmt, out);
   return out;
 }
