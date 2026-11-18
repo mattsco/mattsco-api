@@ -90,6 +90,10 @@ export const DEFAULTS = {
   // its first stage inoculated at replay_start, shown up to now like the others; replay_start empty: no replay
   replay_start: "2026-10-26T07:55:00Z",
   replay_number: 6,
+  // the whole cycle of each vessel (opt-in): 1 = kind=online answers by vessel as a plant historian records an equipment, all the
+  // time: the empty vessel, a fill before each inoculation, the run, an emptying after each transfer (see vesselCycle). Its rows
+  // carry no batch and no stage. 0 (default) = the online rows of the runs only, unchanged
+  cycle: 0,
 };
 
 export function readParams(query) {
@@ -223,6 +227,62 @@ function replayBatch(p, nowMs, fmt, out) {
   }
 }
 
+// ---------- the whole cycle of each vessel (opt-in, cycle=1) ----------
+
+// A historian records an equipment all the time; the runs alone start at inoculation and stop at transfer, with the vessel full.
+// With cycle=1 the online rows are given by vessel: around each run's own rows, the empty vessel (a reading every step_min, values
+// in turn from CYCLE_EMPTY_KG), a fill before the run (the shares of one of CYCLE_EMPTYINGS reversed, of the run's first weight,
+// ending one step before its first reading), and after a finished run an emptying (the shares of one of CYCLE_EMPTYINGS, in turn,
+// of the run's last weight, one step apart), then the empty vessel again. Only the weight is set on the rows added. Nothing later
+// than now; a planned run gives nothing. The shares and the empty readings are those of three emptyings seen in a real export
+// (between the last reading at the working weight and the empty vessel, 5 minutes apart); the fill's shape is invented.
+const CYCLE_EMPTYINGS = [[0.68, 0.28], [0.51, 0.10], [0.79, 0.36]];
+const CYCLE_EMPTY_KG = [1, 0, -9, 6, 5, -2, -9, 3, -9, -11, -10, -12, 2, -13, -7, 5, 5, 5];
+const CYCLE_LEAD_MIN = 60;   // the empty vessel shown this long before the first run of the campaign
+
+function vesselCycle(p, out, nowMs, fmt) {
+  const step = p.step_min * 60 * 1000;
+  // on the local wall clock of the rows (their local strings read as if UTC, written back the same way): steps of step_min in local time
+  const parse = (x) => Date.parse(String(x).replace(" ", "T") + "Z");
+  const wall = localFormatter("UTC");
+  nowMs = parse(fmt(nowMs));
+  const units = [p.units_1.split(","), p.units_2.split(",")].flat().map((x) => x.trim()).filter(Boolean);
+  const runs = out.batches.filter((b) => b.status !== "planned").map((b) => ({ ...b, t0: parse(b.start_local), t1: b.end_local ? parse(b.end_local) : null }))
+    .sort((a, b) => (a.t0 - b.t0) || (a.batch < b.batch ? -1 : a.batch > b.batch ? 1 : 0));
+  const begin = runs.length ? Math.min(...runs.map((r) => r.t0)) - CYCLE_LEAD_MIN * 60 * 1000 : nowMs;
+  const rows = [];
+  let kEmpty = 0;
+  const empty = (u, from, to) => {
+    for (let t = from; t < to - step / 2 && t <= nowMs; t += step) rows.push({ unit: u, t, weight_kg: CYCLE_EMPTY_KG[kEmpty++ % CYCLE_EMPTY_KG.length] });
+  };
+  for (const u of units) {
+    let free = begin, i = 0;
+    for (const r of runs.filter((x) => String(x.unit) === u)) {
+      const own = out.online.filter((o) => o.batch === r.batch && o.stage === r.stage && String(o.unit) === u)
+        .map((o) => ({ ...o, t: parse(o.ts_local) })).sort((a, b) => a.t - b.t);
+      if (!own.length) continue;
+      const shape = CYCLE_EMPTYINGS[i++ % CYCLE_EMPTYINGS.length];
+      const w = own.map((o) => Number(o.weight_kg)).filter(Number.isFinite);
+      const first = own[0].t, last = own[own.length - 1].t;
+      const fill = shape.map((s, j) => [first - (j + 1) * step, s * w[0]]).reverse();
+      empty(u, free, fill[0][0]);
+      for (const [t, x] of fill) if (t <= nowMs) rows.push({ unit: u, t, weight_kg: +x.toFixed(2) });
+      for (const o of own) rows.push({ unit: u, t: o.t, uptake: o.uptake, ph: o.ph, do_pct: o.do_pct, temp_c: o.temp_c, weight_kg: o.weight_kg });
+      if (r.t1 !== null && r.t1 <= nowMs) {
+        shape.forEach((s, j) => { const t = last + (j + 1) * step; if (t <= nowMs) rows.push({ unit: u, t, weight_kg: +(s * w[w.length - 1]).toFixed(2) }); });
+        free = last + (shape.length + 1) * step;
+      } else {
+        free = null;   // running at now: nothing after its rows
+        break;
+      }
+    }
+    if (free !== null) empty(u, free, nowMs + step);
+  }
+  rows.sort((a, b) => (a.unit < b.unit ? -1 : a.unit > b.unit ? 1 : 0) || (a.t - b.t));
+  return rows.filter((r) => r.t <= nowMs).map((r) => ({ batch: null, stage: null, unit: r.unit, ts_local: wall(r.t), duration_h: null,
+    uptake: r.uptake ?? null, ph: r.ph ?? null, do_pct: r.do_pct ?? null, temp_c: r.temp_c ?? null, weight_kg: r.weight_kg }));
+}
+
 // ---------- the campaign ----------
 
 export function simulate(p, nowMs) {
@@ -285,5 +345,6 @@ export function simulate(p, nowMs) {
     }
   }
   replayBatch(p, nowMs, fmt, out);
+  if (p.cycle === 1) out.online = vesselCycle(p, out, nowMs, fmt);
   return out;
 }

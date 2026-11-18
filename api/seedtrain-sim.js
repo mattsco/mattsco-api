@@ -6,6 +6,8 @@
 //            the logs of the caller (the DSS plugin logs them), headers set from a credential preset are masked.
 //   limit    rows per page (default 5000), cursor: offset returned as next_cursor (absent on the last page)
 //   batch, stage   optional filters
+//   cycle    1: kind=online by vessel with the whole cycle (empty vessel, fill, run, emptying; no batch, no stage on its rows);
+//            0 or absent: unchanged
 //   every other parameter: see DEFAULTS in sim-core.js (seed, start, prefix, floors, growth rates, noise, tz, speed...)
 // Answer: { "now_local": ..., "data": [...], "next_cursor": n }. Stateless: the same parameters give the same answer,
 // truncated at the current (simulated) time.
