@@ -230,8 +230,8 @@ function replayBatch(p, nowMs, fmt, out) {
 // ---------- the whole cycle of each vessel (opt-in, cycle=1) ----------
 
 // A historian records an equipment all the time; the runs alone start at inoculation and stop at transfer, with the vessel full.
-// With cycle=1 the online rows are given by vessel: around each run's own rows, the empty vessel (a reading every step_min, values
-// in turn from CYCLE_EMPTY_KG), a fill before the run (the shares of one of CYCLE_EMPTYINGS reversed, of the run's first weight,
+// With cycle=1 the online rows are given by vessel: around each run's own rows, the empty vessel (a reading every step_min, its value
+// from CYCLE_EMPTY_KG by its time), a fill before the run (the shares of one of CYCLE_EMPTYINGS reversed, of the run's first weight,
 // ending one step before its first reading), and after a finished run an emptying (the shares of one of CYCLE_EMPTYINGS, in turn,
 // of the run's last weight, one step apart), then the empty vessel again. Only the weight is set on the rows added. Nothing later
 // than now; a planned run gives nothing. The shares and the empty readings are those of three emptyings seen in a real export
@@ -251,9 +251,9 @@ function vesselCycle(p, out, nowMs, fmt) {
     .sort((a, b) => (a.t0 - b.t0) || (a.batch < b.batch ? -1 : a.batch > b.batch ? 1 : 0));
   const begin = runs.length ? Math.min(...runs.map((r) => r.t0)) - CYCLE_LEAD_MIN * 60 * 1000 : nowMs;
   const rows = [];
-  let kEmpty = 0;
+  // an empty reading's value from its own time, so that a past answer never changes as the clock goes on
   const empty = (u, from, to) => {
-    for (let t = from; t < to - step / 2 && t <= nowMs; t += step) rows.push({ unit: u, t, weight_kg: CYCLE_EMPTY_KG[kEmpty++ % CYCLE_EMPTY_KG.length] });
+    for (let t = from; t < to - step / 2 && t <= nowMs; t += step) rows.push({ unit: u, t, weight_kg: CYCLE_EMPTY_KG[Math.floor(t / step) % CYCLE_EMPTY_KG.length] });
   };
   for (const u of units) {
     let free = begin, i = 0;
